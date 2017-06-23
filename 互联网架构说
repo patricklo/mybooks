@@ -1,0 +1,17 @@
+互联网架构说：
+
+
+
+1. 监控
+
+监控的重要性不言而喻，一开始我们就将监控摆在了首要位置，不论是容量规划、服务的Qos、代码质量管理，都需要监控作为支撑。
+在网络、负载、IO、流量等常规监控上，我们选择了Zabbix。
+在日志分析和报表展示上，我们选择了Kibana，它是我们日志平台的核心组件。
+在业务逻辑的Metrics上，我们选择了Graphite，代码端我们使用了Dropwizard的Metrics库再配合metrics-spring，实现了埋点的最小侵入性。Graphite中的Metrics数据在Grafana进行Dashboard展现，同时Graphite的REST接口提供数据给Zabbix进行业务Metrics报警。
+
+当某个核心业务逻辑的Rate、响应时长超过预定阀值时就会触发。
+
+在服务治理上，我们选择了Dubbo，在调用链的追踪上，开始我们选择了自研，代号为Dragon，通过Dubbo的Attachment将TraceId和Parent SpanId带给RPC下一跳，就能将整个调用链给串起来。Dragon的界面如下，从截图中能够清晰的了解Dragon传达的信息，线上的数值表示网络耗时，红色表示异常，绿色表示正常。
+调用链的追踪可以认为是微观粒度的，是分析某一个请求，宏观层面我们还是依靠Metrics和Dubbo自带的monitor。由于Pinpoint有丰富的插件，所以收集的信息非常多，这也是我们选择它的主要原因。
+
+
