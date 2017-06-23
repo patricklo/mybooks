@@ -6,12 +6,47 @@
 
 监控的重要性不言而喻，一开始我们就将监控摆在了首要位置，不论是容量规划、服务的Qos、代码质量管理，都需要监控作为支撑。
 在网络、负载、IO、流量等常规监控上，我们选择了Zabbix。
+
+2.日志分析和报表展示
 在日志分析和报表展示上，我们选择了Kibana，它是我们日志平台的核心组件。
 在业务逻辑的Metrics上，我们选择了Graphite，代码端我们使用了Dropwizard的Metrics库再配合metrics-spring，实现了埋点的最小侵入性。Graphite中的Metrics数据在Grafana进行Dashboard展现，同时Graphite的REST接口提供数据给Zabbix进行业务Metrics报警。
-
 当某个核心业务逻辑的Rate、响应时长超过预定阀值时就会触发。
 
+3.服务治理（Dubbo)
 在服务治理上，我们选择了Dubbo，在调用链的追踪上，开始我们选择了自研，代号为Dragon，通过Dubbo的Attachment将TraceId和Parent SpanId带给RPC下一跳，就能将整个调用链给串起来。Dragon的界面如下，从截图中能够清晰的了解Dragon传达的信息，线上的数值表示网络耗时，红色表示异常，绿色表示正常。
 调用链的追踪可以认为是微观粒度的，是分析某一个请求，宏观层面我们还是依靠Metrics和Dubbo自带的monitor。由于Pinpoint有丰富的插件，所以收集的信息非常多，这也是我们选择它的主要原因。
+
+4.负载均衡
+对外服务层可以理解为展示层和应用层的结合，七层的负载均衡我们使用的是Nginx。在该层中我们进行应用逻辑的协调和拼装，这层绝大部分REST服务是无状态的，对于需要上下文的逻辑，会话也维持在这层，这一层非常薄。核心逻辑层维护着业务逻辑和业务对象的状态，该层是领域的体现，也是服务治理的核心层。这层的复杂度一般是最高的，因为领域建模、数据持久化、业务流转等都在此完成。为了降低复杂度提高可维护性，这层的项目要严格进行分层架构。基础服务层比较简单，就是一些常规的基础服务，例如:短信网关、邮件网关、全局唯一ID生成器、Pinpoint、推送服务等等。
+
+5.发布
+为了尽可能让发布简单，不论是WEB服务还是Dubbo服务，我们都使用JSW打包成Zip包来发布，对应的maven插件为appassembler-maven-plugin。WEB服务我们基于Spring Boot，通过内嵌Tomcat来实现Zip的创建。
+
+6.配置中心
+配置中心我们选择了Disconf，不但让代码和配置分离，并且让我们一个包能够运行在多套环境。使用Disconf得注意配置文件的加载顺序，特别是在Spring Boot项目中，WEB配置优先于Disconf相关Bean加载，可以使用@PropertySource通过URL来引入Disconf的配置。
+
+7.接口中心（自动生成，代码即文档）
+Swagger用来生成REST接口文档，代码即文档，让接口的文档维护和测试更加容易。随着开源组件的引入越来越多，要迅速搭建一套系统越来越不容易，所以我们抽象出了多种类型的Archetype，各种基础代码和配置都全部自动生成，降低基础组件的使用的成本。在核心库的版本管理上，我们通过maven的parent来管理，从而加强约束将冲突降低最低，也为统一的版本升级提供了便利。
+
+8.服务降级和熔断
+在服务降级和熔断方面，我们选择了Netflix OSS中的Hystrix，不过在我们还是使用Spring Cloud Netflix来集成，不过这个还没有大规模推广。
+
+9.数据库（读写分离）
+读写分离作为最基础的需求，我们没有选择Proxy，而是在Mybatis和Spring的基础上做了二次封装。实现的原理就是事务内的所有SQL语句和没有事务的insert、update、delete走主库，select走从库，但如果select要强制路由到主库，可以在SQL语句头上加/*master*/来实现路由。通过重写Spring的AbstractRoutingDataSource类来实现动态数据源，在事务管理上通过重写Spring的DataSourceTransactionManager来实现事务对数据源的选择，然后再动态代理Mybatis的SqlSession在InvocationHandler的实现中进行路由，如果发现事务已经开启就直接走主库，如果没有事务再进行SQL语句解析从而来选择主从库。网上也有大量的实现，不过都比较粗糙，一定要大量测试，并且弄明白里面所有的门门道道。
+
+10.数据库（分库分表）
+在分库分表方面，我们选择了 sharding-jdbc，不过目前还没有用到核心的业务逻辑中，在Dragon的研发时，抱着测试该库的目的，没有使用HBase，选择使用它进行了分库分表，目前使用下来还是不错。
+
+11.数据库(分布式事务,分库分表带来事务问题)
+当涉及到分布式事务时，我们使用Spring的best efforts 1pc来尽量保证数据的一致性。全局ID生成器的用途广泛，特别是在分库分表业务中，我们选用了twitter的snowflake。
+
+12.缓存和分布式Session
+缓存和分布式Session是每一个可以水平扩展系统都不可能避免的需求，Spring作为技术方案的基石，Spring的Cache和Session自然也作为了我们的首选方案。虽然Spring作为Pivital的看家项目，但在使用中也给我们带来了一些麻烦。Session需要使用Redis的命令，已经上线运行的Twemproxy不支持，所以我们只好切换到Redis的sentinel集群。Session由于发布不久，功能不是很强大，所以我们也做了二次扩展，并且修复了超时设置的小bug。虽然使用起来并不是很完美，但是基于对Pivital的信任，我们还是坚定紧跟Spring的发展。
+
+13.基础设施
+在基础设施选型和建设上，不论是MHA的Mysql、FastDFS+GraphicsMagick、RabbitMQ的Mirror Queue、Sentinel的Redis还是大数据相关的Hadoop、Hbase都是很成熟的解决方案，我们的主要精力都放在了运维方面。对于基础设施，我们的原则是尽可能少，因为运维成本很高，要运维好更难。
+
+14.安全
+安全放在最后讲，并不是因为安全不重要，而是大家都知道很重要，要做好却很难，特别是红星悦家这种刚起步的公司。在内部没有安全团队，并且安全意识比较薄弱的情况下，我们通过内部培训和外部合作来共同提高系统安全。过去一年，我们实现了全站的HTTPS，在账号体系的设计上为了简化动态盐和慢哈希的使用，我们使用了Spring-security中的BCryptPasswordEncoder。XSS防御使用OWASP提供的ESAPI提供的函数进行编码。在CSRF方面，一是遵循Restful风格，二是通过一次性Token和Refer检验；SQL注入防御上就只使用了PreparedStatement，避免了绝大部分攻击。不过在业务驱动的重压之下，虽然安全很多时候被放到了最后一位，不论是内部的理念灌输还是外部渗透测试，我们都一直在努力。
 
 
